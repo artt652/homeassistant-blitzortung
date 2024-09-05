@@ -1,7 +1,7 @@
 import logging
 import datetime
 
-from homeassistant.const import ATTR_ATTRIBUTION, CONF_NAME, LENGTH_KILOMETERS
+from homeassistant.const import ATTR_ATTRIBUTION, CONF_NAME, UnitOfLength
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.device_registry import DeviceEntryType
 
@@ -154,7 +154,7 @@ class LightningSensor(BlitzortungSensor):
 
 class DistanceSensor(LightningSensor):
     kind = ATTR_LIGHTNING_DISTANCE
-    unit_of_measurement = LENGTH_KILOMETERS
+    unit_of_measurement = UnitOfLength.KILOMETERS
 
     def update_lightning(self, lightning):
         self._state = lightning["distance"]
