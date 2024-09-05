@@ -1,13 +1,13 @@
 import datetime
 
-SW_VERSION = "1.3.1"
-
 PLATFORMS = ["sensor", "geo_location"]
 
 DOMAIN = "blitzortung"
 DATA_UNSUBSCRIBE = "unsubscribe"
+ATTR_LIGHTNING_DISTANCE = "distance"
 ATTR_LIGHTNING_AZIMUTH = "azimuth"
 ATTR_LIGHTNING_COUNTER = "counter"
+ATTR_LIGHTNING_TIME_WINDOW_COUNTER = "time_window_counter"
 
 SERVER_STATS = "server_stats"
 
