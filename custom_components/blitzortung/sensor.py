@@ -1,24 +1,28 @@
 import logging
+import datetime
 
-from homeassistant.const import ATTR_ATTRIBUTION, CONF_NAME, DEGREE, UnitOfLength
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import ATTR_ATTRIBUTION, CONF_NAME, LENGTH_KILOMETERS
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.device_registry import DeviceEntryType
 
 from .const import (
     ATTR_LAT,
     ATTR_LIGHTNING_AZIMUTH,
     ATTR_LIGHTNING_COUNTER,
+    ATTR_LIGHTNING_DISTANCE,
+    ATTR_LIGHTNING_TIME_WINDOW_COUNTER,
     ATTR_LON,
     ATTRIBUTION,
     DOMAIN,
     SERVER_STATS,
-    SW_VERSION,
 )
 
 ATTR_ICON = "icon"
 ATTR_LABEL = "label"
 ATTR_UNIT = "unit"
 ATTR_LIGHTNING_PROPERTY = "lightning_prop"
+
+DEGREE = "°"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,7 +65,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         coordinator.register_message_receiver(on_message)
 
 
-class BlitzortungSensor(SensorEntity):
+class BlitzortungSensor(Entity):
     """Define a Blitzortung sensor."""
 
     def __init__(self, coordinator, integration_name, unique_prefix):
@@ -71,6 +75,8 @@ class BlitzortungSensor(SensorEntity):
         self.entity_id = f"sensor.{integration_name}-{self.name}"
         self._unique_id = f"{unique_prefix}-{self.kind}"
         self._device_class = None
+        self._state = None
+        self._unit_of_measurement = None
         self._attrs = {ATTR_ATTRIBUTION: ATTRIBUTION}
 
     should_poll = False
@@ -89,6 +95,11 @@ class BlitzortungSensor(SensorEntity):
     def name(self):
         """Return the name."""
         return f"Lightning {self.label}"
+
+    @property
+    def state(self):
+        """Return the state."""
+        return self._state
 
     @property
     def extra_state_attributes(self):
@@ -114,7 +125,7 @@ class BlitzortungSensor(SensorEntity):
             "name": f"{self._integration_name} Lightning Detector",
             "identifiers": {(DOMAIN, self._integration_name)},
             "model": "Lightning Detector",
-            "sw_version": SW_VERSION,
+            "sw_version": "0.0.1",
             "entry_type": DeviceEntryType.SERVICE,
         }
 
@@ -133,22 +144,20 @@ class LightningSensor(BlitzortungSensor):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._attr_native_value = self.INITIAL_STATE
+        self._state = self.INITIAL_STATE
 
     def tick(self):
-        if self._attr_native_value != self.INITIAL_STATE and self.coordinator.is_inactive:
-            self._attr_native_value = self.INITIAL_STATE
+        if self._state != self.INITIAL_STATE and self.coordinator.is_inactive:
+            self._state = self.INITIAL_STATE
             self.async_write_ha_state()
 
 
 class DistanceSensor(LightningSensor):
-    kind = SensorDeviceClass.DISTANCE
-    device_class = SensorDeviceClass.DISTANCE
-    state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    kind = ATTR_LIGHTNING_DISTANCE
+    unit_of_measurement = LENGTH_KILOMETERS
 
     def update_lightning(self, lightning):
-        self._attr_native_value = lightning["distance"]
+        self._state = lightning["distance"]
         self._attrs[ATTR_LAT] = lightning[ATTR_LAT]
         self._attrs[ATTR_LON] = lightning[ATTR_LON]
         self.async_write_ha_state()
@@ -156,10 +165,10 @@ class DistanceSensor(LightningSensor):
 
 class AzimuthSensor(LightningSensor):
     kind = ATTR_LIGHTNING_AZIMUTH
-    _attr_native_unit_of_measurement = DEGREE
+    unit_of_measurement = DEGREE
 
     def update_lightning(self, lightning):
-        self._attr_native_value = lightning["azimuth"]
+        self._state = lightning["azimuth"]
         self._attrs[ATTR_LAT] = lightning[ATTR_LAT]
         self._attrs[ATTR_LON] = lightning[ATTR_LON]
         self.async_write_ha_state()
@@ -167,11 +176,33 @@ class AzimuthSensor(LightningSensor):
 
 class CounterSensor(LightningSensor):
     kind = ATTR_LIGHTNING_COUNTER
-    _attr_native_unit_of_measurement = "↯"
+    unit_of_measurement = "↯"
     INITIAL_STATE = 0
 
     def update_lightning(self, lightning):
-        self._attr_native_value = self._attr_native_value + 1
+        self._state = self._state + 1
+        self.async_write_ha_state()
+
+
+class TimeWindowCounterSensor(LightningSensor):
+    kind = ATTR_LIGHTNING_TIME_WINDOW_COUNTER
+    unit_of_measurement = "↯"
+    INITIAL_STATE = 0
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._counter_per_date = {}
+
+    def update_lightning(self, lightning):
+        now = datetime.datetime.now(datetime.timezone.utc).replace(second=0, microsecond=0)
+        oldest_date = now - datetime.timedelta(minutes=self.coordinator.time_window_seconds / 60)
+        self._counter_per_date[now] = self._counter_per_date.get(now, 0) + 1
+
+        for date_key in list(self._counter_per_date.keys()):
+            if date_key < oldest_date:
+                del self._counter_per_date[date_key]
+
+        self._state = sum(self._counter_per_date.values())
         self.async_write_ha_state()
 
 
@@ -210,9 +241,9 @@ class ServerStatSensor(BlitzortungSensor):
         if topic == self._topic:
             payload = message.payload.decode("utf-8")
             try:
-                self._attr_native_value = self.data_type(payload)
+                self._state = self.data_type(payload)
             except ValueError:
-                self._attr_native_value = str(payload)
+                self._state = str(payload)
             if self.hass:
                 self.async_write_ha_state()
 
