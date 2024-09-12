@@ -7,7 +7,6 @@ from operator import attrgetter
 from typing import Callable, List, Optional, Union
 
 import attr
-
 from homeassistant.core import callback, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import dispatcher_send
@@ -22,14 +21,12 @@ DEFAULT_PROTOCOL = PROTOCOL_311
 MQTT_CONNECTED = "blitzortung_mqtt_connected"
 MQTT_DISCONNECTED = "blitzortung_mqtt_disconnected"
 
-
 MAX_RECONNECT_WAIT = 300  # seconds
 
 
 def _raise_on_error(result_code: int) -> None:
     """Raise error if error result."""
-    # pylint: disable=import-outside-toplevel
-    import paho.mqtt.client as mqtt
+    import paho.mqtt.client as mqtt  # pylint: disable=import-outside-toplevel
 
     if result_code != 0:
         raise HomeAssistantError(
@@ -39,8 +36,7 @@ def _raise_on_error(result_code: int) -> None:
 
 def _match_topic(subscription: str, topic: str) -> bool:
     """Test if topic matches subscription."""
-    # pylint: disable=import-outside-toplevel
-    from paho.mqtt.matcher import MQTTMatcher
+    from paho.mqtt.matcher import MQTTMatcher  # pylint: disable=import-outside-toplevel
 
     matcher = MQTTMatcher()
     matcher[subscription] = True
@@ -86,15 +82,9 @@ class MQTT:
     """Home Assistant MQTT client."""
 
     def __init__(
-        self,
-        hass: HomeAssistant,
-        host,
-        port=DEFAULT_PORT,
-        keepalive=DEFAULT_KEEPALIVE,
+        self, hass: HomeAssistant, host, port=DEFAULT_PORT, keepalive=DEFAULT_KEEPALIVE
     ) -> None:
         """Initialize Home Assistant MQTT client."""
-        # We don't import on the top because some integrations
-        # should be able to optionally rely on MQTT.
         import paho.mqtt.client as mqtt  # pylint: disable=import-outside-toplevel
 
         self.hass = hass
@@ -110,8 +100,6 @@ class MQTT:
 
     def init_client(self):
         """Initialize paho client."""
-        # We don't import on the top because some integrations
-        # should be able to optionally rely on MQTT.
         import paho.mqtt.client as mqtt  # pylint: disable=import-outside-toplevel
 
         proto = mqtt.MQTTv311
@@ -133,9 +121,6 @@ class MQTT:
 
     async def async_connect(self) -> str:
         """Connect to the host. Does not process messages yet."""
-        # pylint: disable=import-outside-toplevel
-        import paho.mqtt.client as mqtt
-
         result: int = None
         try:
             result = await self.hass.async_add_executor_job(
@@ -145,6 +130,7 @@ class MQTT:
             _LOGGER.error("Failed to connect to MQTT server due to exception: %s", err)
 
         if result is not None and result != 0:
+            import paho.mqtt.client as mqtt  # pylint: disable=import-outside-toplevel
             _LOGGER.error(
                 "Failed to connect to MQTT server: %s", mqtt.error_string(result)
             )
@@ -164,10 +150,7 @@ class MQTT:
     async def async_subscribe(
         self, topic: str, msg_callback, qos: int, encoding: Optional[str] = None,
     ) -> Callable[[], None]:
-        """Set up a subscription to a topic with the provided qos.
-
-        This method is a coroutine.
-        """
+        """Set up a subscription to a topic with the provided qos."""
         if not isinstance(topic, str):
             raise HomeAssistantError("Topic needs to be a string!")
 
@@ -196,10 +179,7 @@ class MQTT:
         return async_remove
 
     async def _async_unsubscribe(self, topic: str) -> None:
-        """Unsubscribe from a topic.
-
-        This method is a coroutine.
-        """
+        """Unsubscribe from a topic."""
         _LOGGER.debug("Unsubscribing from %s", topic)
         async with self._paho_lock:
             result: int = None
@@ -211,7 +191,6 @@ class MQTT:
     async def _async_perform_subscription(self, topic: str, qos: int) -> None:
         """Perform a paho-mqtt subscription."""
         _LOGGER.debug("Subscribing to %s", topic)
-
         async with self._paho_lock:
             result: int = None
             result, _ = await self.hass.async_add_executor_job(
@@ -220,13 +199,8 @@ class MQTT:
             _raise_on_error(result)
 
     def _mqtt_on_connect(self, _mqttc, _userdata, _flags, result_code: int) -> None:
-        """On connect callback.
-
-        Resubscribe to all topics we were subscribed to and publish birth
-        message.
-        """
-        # pylint: disable=import-outside-toplevel
-        import paho.mqtt.client as mqtt
+        """On connect callback."""
+        import paho.mqtt.client as mqtt  # pylint: disable=import-outside-toplevel
 
         if result_code != mqtt.CONNACK_ACCEPTED:
             _LOGGER.error(
@@ -241,10 +215,8 @@ class MQTT:
             "Connected to MQTT server %s:%s (%s)", self.host, self.port, result_code,
         )
 
-        # Group subscriptions to only re-subscribe once for each topic.
         keyfunc = attrgetter("topic")
         for topic, subs in groupby(sorted(self.subscriptions, key=keyfunc), keyfunc):
-            # Re-subscribe with the highest requested qos
             max_qos = max(subscription.qos for subscription in subs)
             self.hass.add_job(self._async_perform_subscription, topic, max_qos)
 
@@ -303,3 +275,22 @@ class MQTT:
             self.port,
             result_code,
         )
+
+        if result_code != 0:
+            _LOGGER.warning("Unexpected disconnection from MQTT. Attempting reconnection.")
+            self.hass.async_create_task(self._handle_reconnect())
+
+    async def _handle_reconnect(self):
+        """Handle MQTT reconnection logic with backoff."""
+        wait_time = 1
+        while not self.connected and wait_time < MAX_RECONNECT_WAIT:
+            try:
+                await asyncio.sleep(wait_time)
+                await self.async_connect()
+                wait_time = min(wait_time * 2, MAX_RECONNECT_WAIT)
+            except Exception as e:
+                _LOGGER.error(f"Reconnection attempt failed: {e}")
+                wait_time = min(wait_time * 2, MAX_RECONNECT_WAIT)
+        
+        if not self.connected:
+            _LOGGER.error("Failed to reconnect to MQTT server after several attempts.")
